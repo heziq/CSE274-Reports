@@ -1,160 +1,62 @@
-# Milestone 1 Progress Update
+# Progress Report: Volumetric Self-Transfer for Real-Time Relighting
 
-## Project Overview
+**Project:** Volumetric Precomputed Radiance Transfer (PRT) in Participating Media  
+**Student:** [Your Name]  
+**Date:** February 10, 2026
 
-This project implements a **volumetric self-transfer** system for image-based relighting, extending Precomputed Radiance Transfer (PRT) to participating media such as fog and clouds. The core innovation is decoupling light transport from lighting by precomputing how a volume attenuates light from all directions, then reusing this precomputed response at runtime with dynamic HDR environment maps. Unlike traditional volumetric rendering, which computes shadowing every frame, this approach moves self-shadowing computation entirely to precomputation, enabling real-time relighting using low-frequency spherical harmonics (SH) representations.
+---
 
-## Completed Work (Stages 1–4)
+## 1. Project Overview
+This project implements a **Volumetric Self-Transfer** system inspired by Sloan et al.’s *Precomputed Radiance Transfer (PRT)*. The goal is to achieve real-time relighting of participating media—specifically clouds or fog—under dynamic HDR environment maps. By decoupling light transport from the lighting environment, the expensive computation of volumetric self-shadowing is moved to an offline precomputation phase, enabling interactive lighting exploration at runtime.
 
-### Stage 1: Volume Rendering Foundation
-- Implemented ray marching in OpenGL fragment shaders with analytic density field
-- Ellipsoid SDF model with exponential falloff for foggy appearance
-- Beer-Lambert transmittance and alpha compositing
-- Early ray termination optimization when transmittance falls below threshold
-- Result: visible volumetric ellipsoid rendered in real-time
+## 2. Technical Implementation Progress
 
-### Stage 2: Local Directional Lighting
-- Single hand-written directional light with Lambertian shading
-- Approximate surface normals (normalized position vector for ellipsoid geometry)
-- Configurable light intensity, direction, and fog color
-- Verified correct light direction mapping to surface brightness variation
+### 2.1 Ray Marching and Density Modeling (Completed)
+I have implemented a GPU-based ray marcher within a fragment shader. 
+* **Density Field:** The volume is defined by an analytic ellipsoid Signed Distance Function (SDF) with an exponential falloff to simulate a realistic "fuzzy" boundary.
+* **Transmittance:** Light attenuation is calculated via the Beer-Lambert Law.
+* **Optimization:** The system utilizes ray-ellipsoid intersection for early optimization and early ray termination once transmittance falls below a specific threshold.
 
-### Stage 3: Spherical Harmonics Lighting
-Replaced directional lighting with environment-style lighting using SH coefficients:
+### 2.2 Image-Based Lighting via Spherical Harmonics (Completed)
+To represent the infinite lighting of an HDR environment map, I utilize **Spherical Harmonics (SH)**.
+* **Projection:** HDR environment maps are projected into 3rd-order SH (9 coefficients) using an offline Python pipeline.
+* **Runtime Reconstitution:** The shader reconstructs the lighting signal using SH basis functions implemented in GLSL, allowing for smooth, low-frequency global illumination without sampling the environment map directly per step.
 
-**Why Spherical Harmonics?**
-- Signal representation for lighting functions $L(\omega)$
-- Enable fast runtime evaluation via dot product instead of many ray traces
-- Low-frequency nature suits volumetric scattering well
+> **[Space for Image: HDR Environment Maps (EXR) and their SH Projections]**
 
-**Implementation Details:**
-- **Order 3 (9 coefficients)** chosen for balance between quality and performance
-- Coefficients represent order 0 (ambient), order 1 (directional), and order 2 (quadratic variations)
-- GLSL implementation: `evalSHBasis(vec3 dir, out float basis[9])` computes basis functions
-- SH reconstruction: $L(\omega) = \sum_{i=0}^{8} L_i \cdot Y_i(\omega)$
-- 9 vec3 uniforms (27 floats total) for RGB SH coefficients
-- Clamped to non-negative values (lighting cannot be negative)
+### 2.3 Volumetric Self-Transfer & PRT Core (Completed)
+The core of the project involves precomputing a **Transfer Function** $T(p, \omega)$ for every voxel in a $64^3$ grid.
+* **Precomputation:** For each voxel, I sample 512 directions (Fibonacci sphere) and march rays outward to calculate self-occlusion. These results are projected into SH coefficients $T_{\text{SH}}(p)$.
+* **Runtime Integration:** The radiance at a point $p$ is calculated as a dot product:
+    $$L_{\text{inscatter}}(p) \approx \frac{1}{4\pi} \sum_i \frac{L_{\text{stored}}^{(i)}}{A_\ell} \cdot T_{\text{SH}}^{(i)}(p)$$
+* **Kernel Un-baking:** I manually remove the Lambertian cosine kernel ($A_\ell$) from the lighting coefficients in the shader to ensure the math correctly reflects volumetric scattering rather than surface irradiance.
 
-**Visual Result:** Softer, more ambient illumination from all directions rather than a single light source
+> **[Space for Image: Output comparison showing "No Self-Transfer" vs "PRT Self-Shadowing"]**
 
-### Stage 3.5: HDR Environment Maps
-- Python pipeline (Jupyter notebook) to project HDR images onto SH coefficients
-- Offline preprocessing: HDR → SH JSON files in `assets/precompute/sh_lighting/`
-- ImGui integration for interactive runtime environment switching
-- Auto-discovery of SH JSON files at startup
-- Color shifts visible (blue sky, warm sunlit ground) demonstrate image-derived lighting
-- **Key insight:** Lighting clearly originates from environment images, not hand-tuned values
+---
 
-### Stage 4: Volumetric Self-Transfer (PRT Core)
+## 3. Current Status & Debugging
+The system is currently fully interactive using **Dear ImGui**.
+* **Environment Switching:** Any HDR-derived JSON file in the assets folder can be loaded at runtime to instantly change the lighting environment.
+* **Visualization Modes:** I have implemented debug modes to view the raw **Transfer DC** (self-shadow map) and **PRT Raw** (un-normalized) to verify the integrity of the 3D texture data.
 
-This is the main contribution. Self-transfer encodes how each voxel in the volume blocks light from different directions.
+---
 
-**Precomputation Pipeline (Offline, Python):**
-- Grid resolution: 64³ voxels spanning $[-1.2, 1.2]^3$
-- Direction sampling: 512 quasi-uniform directions via Fibonacci sphere
-- For each voxel $p$:
-  - March rays outward along each direction $\omega_j$
-  - Accumulate Beer-Lambert transmittance: $T(p, \omega_j) = \exp(-\sigma \int \text{density} \, dt)$
-  - Project transmittance onto SH: $T_{\ell m}(p) = \frac{4\pi}{N} \sum_{j=1}^{N} T(p, \omega_j) \cdot Y_{\ell m}(\omega_j)$
-- Output: Binary file `transfer_64x64x64x9.bin` (~9.4 MB, float32)
-- Device support: CUDA, Apple Silicon MPS, or CPU fallback
+## 4. Future Work: Experiments & IBR Exploration
+I plan to dedicate the final stage to systematic evaluation and exploring the limits of this Image-Based Rendering (IBR) technique.
 
-**Transfer Data Characteristics:**
-- **DC coefficient ($T_0^0$):** Range [1.09, 3.48]
-  - Center voxel ≈ 1.09 (only ~31% transmittance, heavy self-shadowing)
-  - Corner voxels ≈ 3.48 (near theoretical max)
-- **Directional coefficients (SH 1–8):** Magnitude ~1.2, zero-mean
-  - Encode directional asymmetry of blocking
-  - Strongest at surface, weakest at center (uniform occlusion)
+### 4.1 Quantitative & Qualitative Evaluation
+* **Voxel Resolution:** Compare visual fidelity and memory overhead of $32^3$ vs $64^3$ vs $128^3$ transfer grids.
+* **SH Order Analysis:** Evaluate if 9 coefficients are sufficient for "peaked" lighting (e.g., sunsets) or if higher orders are necessary to capture directional shadows.
 
-**Runtime Rendering (C++ / GLSL):**
-- Load binary → pack into 3 × `GL_TEXTURE_3D` (RGB32F, 64³ each)
-  - Texture 0: SH coefficients 0, 1, 2 → R, G, B channels
-  - Texture 1: SH coefficients 3, 4, 5 → R, G, B channels
-  - Texture 2: SH coefficients 6, 7, 8 → R, G, B channels
-- Sample with hardware trilinear interpolation for smooth spatial variation
-- **PRT rendering equation:**
-  $$L_{\text{inscatter}}(p) = \frac{1}{4\pi} \sum_{i=0}^{8} \frac{L_{\text{stored}}^{(i)}}{A_\ell} \cdot T_i(p)$$
-  
-  Where:
-  - $L_{\text{stored}}^{(i)}$ are SH lighting coefficients (includes Lambertian kernel)
-  - $A_\ell$ are kernel factors: $A_0 = \pi$, $A_1 = 2\pi/3$, $A_2 = \pi/4$
-  - Dividing by $A_\ell$ removes Lambertian kernel (incorrect for volumetric scattering)
-  - $\frac{1}{4\pi}$ is isotropic phase function for volumetric scattering
-  - $T_i(p)$ are sampled transfer SH coefficients from 3D textures
+### 4.2 IBR-Focused Extensions
+* **Phase Function Variation:** Currently, the system uses an isotropic phase function. I plan to implement the **Henyey-Greenstein** phase function to see how forward-scattering interacts with the precomputed SH transfer.
+* **Hybrid Lighting:** Explore combining the global SH lighting with a single high-frequency directional light (the Sun) to see if it resolves the "softness" limitation of low-order PRT.
 
-**Why Undo the Lambertian Kernel?**
-- The precomputed SH lighting coefficients include a Lambertian cosine kernel
-- This kernel is correct for diffuse surface irradiance rendering
-- But for volumetric PRT, the angular integration is already in the transfer function
-- Applying the kernel twice would inflate DC by 3.14× and distort band ratios, causing oversaturation
-- Solution: Divide each SH band by its $A_\ell$ factor in the shader
+---
 
-**Auto-Exposure Normalization:**
-- Different HDR environments vary enormously in total energy (e.g., meadow vs dim scenes: 20×+ difference)
-- Auto-exposure: `effectiveExposure = 15.0 / length(L_DC)`
-- Normalizes all environments to produce similar brightness (~0.7 before tone mapping)
-- User's exposure slider multiplies on top of this auto-normalization
+## 5. Questions for the Professor
 
-**Debug Visualization Modes:**
-- **PRT Normal:** Full pipeline with Lambertian kernel removal, phase function, and auto-exposure. Final output showing colored, directional self-shadowing.
-- **Transfer DC:** Raw self-shadow map showing precomputed DC coefficient, normalized to [0,1]. Dark center, bright edges verify correct precomputation.
-- **PRT Raw:** Same as PRT Normal but without phase function (~12.6× brighter). Verifies phase function correctness.
-
-## Technical Stack
-
-**Runtime:**
-- C++ with OpenGL 3.3 Core
-- GLSL fragment shaders for ray marching and PRT
-- GLFW for window and input management
-- GLM for mathematics
-- Dear ImGui for interactive parameter control
-
-**Precomputation:**
-- Python with NumPy and PyTorch (Jupyter notebooks)
-- CUDA/MPS support for GPU acceleration
-
-**Build:**
-- CMake 3.10+ with Homebrew dependency detection
-- External GLAD for OpenGL function loading
-
-## Next Steps
-
-### Immediate (Finishing Stage 5)
-- **Comparative Analysis:** Quantitatively compare rendering quality across different configurations
-  - SH lighting with vs without self-transfer
-  - Different SH orders (4 vs 9 vs 16 coefficients) and their impact on quality
-  - Different voxel resolutions (32³ vs 64³ vs 128³) and performance scaling
-- **HDR Environment Variety:** Test with diverse lighting conditions (directional sunlight, diffuse cloudy sky, mixed indoor/outdoor)
-- **Failure Case Documentation:** Identify and document scenarios where low-frequency SH representation breaks down (e.g., strong high-frequency lighting patterns)
-- **Performance Analysis:** Measure frame rates, precomputation time, and memory usage across configurations
-
-### IMR-Focused Exploration (Advanced)
-- **Multiple Scattering:** Extend single-scattering PRT to include second-order bounces. Self-transfer currently accounts only for occlusion along outgoing rays; multiple scattering would capture light bouncing between volume elements.
-- **Anisotropic Phase Functions:** Replace isotropic $\frac{1}{4\pi}$ with Henyey-Greenstein or other phase functions to model forward/backward scattering more realistically.
-- **Temporal Coherence & Motion:** Explore precomputing directional transfer for multiple volume poses/deformations, enabling animated self-shadowing without recomputation.
-- **Frequency Analysis:** Study which SH bands contribute most to self-shadowing. Can we predict perceptually important bands without computing all 9?
-- **Hybrid Approaches:** Compare against lightweight alternatives:
-  - Normal-based SH (no precomputation, surface-only approximation)
-  - Per-voxel cone tracing for dynamic occlusion
-  - Neural networks to compress or predict transfer functions
-
-## Questions for Discussion
-
-1. **Exploration Direction:** Should I prioritize completing Stage 5 evaluation first, or would you recommend diving into multiple-scattering extension? What would be more valuable for IMR community?
-
-2. **SH Order Tradeoff:** Is there literature or guidance on predicting the minimum SH order needed for a given scene's lighting complexity without exhaustive testing?
-
-3. **Volume Deformation:** If the ellipsoid shape changes at runtime (e.g., animated clouds), would it be feasible to precompute transfer for multiple keyframe poses and interpolate, or does this break the method fundamentally?
-
-4. **Validation:** For comparing against ground truth, would ray-traced volumetric shadows per frame be the best reference, or is there a faster offline method?
-
-5. **Practical Limitations:** Are there known failure cases in PRT-style methods when applied to volumetric media that I should be aware of?
-
-## Visual Placeholders
-
-![EXR render showing volumetric self-shadowing with directional environment lighting](path/to/exr_render.exr)
-
-![Comparison of different visualization modes: PRT Normal vs Transfer DC vs PRT Raw](path/to/visualization_modes.png)
-
-![Transfer DC coefficient visualization showing self-shadow intensity variation](path/to/transfer_dc.png)
+1.  **SH Frequency Limits:** Given that SH is inherently low-frequency, I lose the "sharp" edges of the sun. In IBR practice, is it better to move to higher SH orders (e.g., Order 5), or to treat the primary light source as a separate analytic light while using PRT for the rest of the environment?
+2.  **Dynamic Geometry:** My transfer function is currently tied to a static ellipsoid density. If I were to animate the cloud's shape (deforming the SDF), the precomputation becomes invalid. Are there common "warping" techniques in PRT that allow for simple geometric deformations without re-baking the entire 3D texture?
+3.  **Multiple Scattering Approximation:** My current model focuses on single scattering. Would adding a simplified "ambient" SH term to the transfer function be a valid way to approximate multiple scattering in this framework, or does that break the PRT mental model?
