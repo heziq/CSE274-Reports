@@ -22,7 +22,17 @@ To represent the infinite lighting of an HDR environment map, I utilize **Spheri
 * **Projection:** HDR environment maps are projected into 3rd-order SH (9 coefficients) using an offline Python pipeline.
 * **Runtime Reconstitution:** The shader reconstructs the lighting signal using SH basis functions implemented in GLSL, allowing for smooth, low-frequency global illumination without sampling the environment map directly per step.
 
-> **[Space for Image: HDR Environment Maps (EXR) and their SH Projections]**
+HDR Environment Map 1:
+![studio env map](image-1.png)
+
+SH Projection 1:
+![studio SH projection](image.png)
+
+HDR Environment Map 2:
+![meadow](image-2.png)
+
+SH Projection 2:
+![meadow sh project](image-3.png)
 
 ### 2.3 Volumetric Self-Transfer & PRT Core (Completed)
 The core of the project involves precomputing a **Transfer Function** $T(p, \omega)$ for every voxel in a $64^3$ grid.
@@ -32,6 +42,17 @@ The core of the project involves precomputing a **Transfer Function** $T(p, \ome
 * **Kernel Un-baking:** I manually remove the Lambertian cosine kernel ($A_\ell$) from the lighting coefficients in the shader to ensure the math correctly reflects volumetric scattering rather than surface irradiance.
 
 > **[Space for Image: Output comparison showing "No Self-Transfer" vs "PRT Self-Shadowing"]**
+
+Self shadowing map:
+![self shadwoing map](image-4.png)
+
+PRT:
+
+Meadow:
+![meadow_prt](image-5.png)
+
+Studio:
+![studio_prt](image-6.png)
 
 ---
 
